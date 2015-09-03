@@ -1,19 +1,19 @@
 /*
- *Copyright (c) 2005-2014, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2014, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
  *
- *WSO2 Inc. licenses this file to you under the Apache License,
- *Version 2.0 (the "License"); you may not use this file except
- *in compliance with the License.
- *You may obtain a copy of the License at
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *Unless required by applicable law or agreed to in writing,
- *software distributed under the License is distributed on an
- *"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- *KIND, either express or implied.  See the License for the
- *specific language governing permissions and limitations
- *under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package org.wso2.carbon.identity.application.mgt;
@@ -21,8 +21,8 @@ package org.wso2.carbon.identity.application.mgt;
 import org.apache.axiom.om.OMElement;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.wso2.carbon.identity.application.common.config.IdentityApplicationConfig;
-import org.wso2.carbon.identity.application.common.util.IdentityApplicationConstants;
+import org.wso2.carbon.base.ServerConfigurationException;
+import org.wso2.carbon.identity.application.common.util.IdentityApplicationManagementUtil;
 import org.wso2.carbon.identity.application.mgt.dao.ApplicationDAO;
 import org.wso2.carbon.identity.application.mgt.dao.IdentityProviderDAO;
 import org.wso2.carbon.identity.application.mgt.dao.OAuthApplicationDAO;
@@ -31,9 +31,9 @@ import org.wso2.carbon.identity.application.mgt.dao.impl.ApplicationDAOImpl;
 import org.wso2.carbon.identity.application.mgt.dao.impl.IdentityProviderDAOImpl;
 import org.wso2.carbon.identity.application.mgt.dao.impl.OAuthApplicationDAOImpl;
 import org.wso2.carbon.identity.application.mgt.dao.impl.SAMLApplicationDAOImpl;
+import org.wso2.carbon.identity.core.util.IdentityConfigParser;
+import org.wso2.carbon.identity.core.util.IdentityCoreConstants;
 import org.wso2.carbon.utils.CarbonUtils;
-
-import javax.xml.namespace.QName;
 
 /**
  * This instance holds all the system configurations
@@ -48,7 +48,7 @@ public class ApplicationMgtSystemConfig {
     private static final String CONFIG_SAML_DAO = "SAMLClientDAO";
     private static final String CONFIG_SYSTEM_IDP_DAO = "SystemIDPDAO";
     private static final String CONFIG_CLAIM_DIALECT = "ClaimDialect";
-    private static ApplicationMgtSystemConfig instance = null;
+    private static volatile ApplicationMgtSystemConfig instance = null;
     // configured String values
     private String appDAOClassName = null;
     private String oauthDAOClassName = null;
@@ -58,10 +58,7 @@ public class ApplicationMgtSystemConfig {
 
 
     private ApplicationMgtSystemConfig() {
-
-        synchronized (ApplicationMgtSystemConfig.class) {
-            buildSystemConfiguration();
-        }
+        buildSystemConfiguration();
     }
 
     /**
@@ -86,51 +83,53 @@ public class ApplicationMgtSystemConfig {
      */
     private void buildSystemConfiguration() {
 
-        IdentityApplicationConfig configParser = IdentityApplicationConfig.getInstance();
-        OMElement spConfigElem = configParser.getConfigElement(CONFIG_ELEMENT_SP_MGT);
-
+        OMElement spConfigElem = null;
+        try {
+            spConfigElem = IdentityConfigParser.getInstance().getConfigElement(CONFIG_ELEMENT_SP_MGT);
+        } catch (ServerConfigurationException e) {
+            log.error("Error occurred while reading " + CONFIG_ELEMENT_SP_MGT + " configuration from " +
+                    IdentityCoreConstants.IDENTITY_CONFIG);
+        }
         if (spConfigElem == null) {
-            log.warn("No Identity Application Management configuration found. System Starts with default settings");
+            if(log.isDebugEnabled()){
+                log.debug("No ServiceProvidersManagement configuration found. System Starts with default configuration");
+            }
         } else {
             // application DAO class
-            OMElement appDAOConfigElem =
-                    spConfigElem.getFirstChildWithName(getQNameWithIdentityNS(CONFIG_APPLICATION_DAO));
+            OMElement appDAOConfigElem = spConfigElem.getFirstChildWithName(IdentityApplicationManagementUtil.
+                    getQNameWithIdentityApplicationNS(CONFIG_APPLICATION_DAO));
             if (appDAOConfigElem != null) {
                 appDAOClassName = appDAOConfigElem.getText().trim();
             }
 
             // OAuth and OpenID Connect DAO class
-            OMElement oauthOidcDAOConfigElem =
-                    spConfigElem.getFirstChildWithName(getQNameWithIdentityNS(CONFIG_OAUTH_OIDC_DAO));
+            OMElement oauthOidcDAOConfigElem = spConfigElem.getFirstChildWithName(IdentityApplicationManagementUtil.
+                    getQNameWithIdentityApplicationNS(CONFIG_OAUTH_OIDC_DAO));
             if (oauthOidcDAOConfigElem != null) {
                 oauthDAOClassName = oauthOidcDAOConfigElem.getText().trim();
             }
 
             // SAML DAO class
-            OMElement samlDAOConfigElem =
-                    spConfigElem.getFirstChildWithName(getQNameWithIdentityNS(CONFIG_SAML_DAO));
+            OMElement samlDAOConfigElem = spConfigElem.getFirstChildWithName(IdentityApplicationManagementUtil.
+                    getQNameWithIdentityApplicationNS(CONFIG_SAML_DAO));
             if (samlDAOConfigElem != null) {
                 samlDAOClassName = samlDAOConfigElem.getText().trim();
             }
 
             // IDP DAO class
-            OMElement idpDAOConfigElem =
-                    spConfigElem.getFirstChildWithName(getQNameWithIdentityNS(CONFIG_SYSTEM_IDP_DAO));
+            OMElement idpDAOConfigElem = spConfigElem.getFirstChildWithName(IdentityApplicationManagementUtil.
+                    getQNameWithIdentityApplicationNS(CONFIG_SYSTEM_IDP_DAO));
             if (idpDAOConfigElem != null) {
                 systemIDPDAPClassName = idpDAOConfigElem.getText().trim();
             }
 
-            OMElement claimDAOConfigElem =
-                    spConfigElem.getFirstChildWithName(getQNameWithIdentityNS(CONFIG_CLAIM_DIALECT));
+            OMElement claimDAOConfigElem = spConfigElem.getFirstChildWithName(IdentityApplicationManagementUtil.
+                    getQNameWithIdentityApplicationNS(CONFIG_CLAIM_DIALECT));
             if (claimDAOConfigElem != null) {
                 claimDialect = claimDAOConfigElem.getText().trim();
             }
 
         }
-    }
-
-    private QName getQNameWithIdentityNS(String localPart) {
-        return new QName(IdentityApplicationConstants.APPLICATION_AUTHENTICATION_DEFAULT_NAMESPACE, localPart);
     }
 
     /**

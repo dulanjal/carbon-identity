@@ -1,27 +1,29 @@
 /*
- * Copyright (c) WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
- * 
+ * Copyright (c) 2014, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ *
  * WSO2 Inc. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
+ *  Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
+ * KIND, either express or implied.  See the License for the
  * specific language governing permissions and limitations
  * under the License.
  */
 
 package org.wso2.carbon.identity.mgt.dto;
 
+import org.apache.commons.lang.StringUtils;
 import org.wso2.carbon.identity.mgt.store.UserIdentityDataStore;
 import org.wso2.carbon.user.core.UserCoreConstants;
 
 import java.io.Serializable;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -42,7 +44,6 @@ public class UserIdentityClaimsDO implements Serializable {
     private long unlockTime;
     private long lastLogonTime;
     private long lastFailAttemptTime;
-    private long passwordTimeStamp;
     private int failedAttempts;
     private boolean accountLock;
     private boolean passwordChangeRequired;
@@ -61,10 +62,10 @@ public class UserIdentityClaimsDO implements Serializable {
         this.userIdentityDataMap = userDataMap;
 
         if (userDataMap.get(UserIdentityDataStore.FAIL_LOGIN_ATTEMPTS) != null) {
-            String failedAttempts = userDataMap.get(UserIdentityDataStore.FAIL_LOGIN_ATTEMPTS)
+            String failedAttemptsData = userDataMap.get(UserIdentityDataStore.FAIL_LOGIN_ATTEMPTS)
                     .trim();
-            if (!failedAttempts.isEmpty()) {
-                setFailAttempts(Integer.parseInt(failedAttempts));
+            if (!failedAttemptsData.isEmpty()) {
+                setFailAttempts(Integer.parseInt(failedAttemptsData));
             } else {
                 setFailAttempts(0);
             }
@@ -73,9 +74,9 @@ public class UserIdentityClaimsDO implements Serializable {
             setLastFailAttemptTime(Long.parseLong(userDataMap.get(UserIdentityDataStore.LAST_FAILED_LOGIN_ATTEMPT_TIME)));
         }
         if (userDataMap.get(UserIdentityDataStore.UNLOCKING_TIME) != null) {
-            String unlockTime = userDataMap.get(UserIdentityDataStore.UNLOCKING_TIME).trim();
-            if (!unlockTime.isEmpty()) {
-                setUnlockTime(Long.parseLong(unlockTime));
+            String unlockTimeData = userDataMap.get(UserIdentityDataStore.UNLOCKING_TIME).trim();
+            if (!unlockTimeData.isEmpty()) {
+                setUnlockTime(Long.parseLong(unlockTimeData));
             } else {
                 setUnlockTime(0);
             }
@@ -97,14 +98,6 @@ public class UserIdentityClaimsDO implements Serializable {
         }
         if (userDataMap.get(UserIdentityDataStore.ACCOUNT_LOCK) != null) {
             setAccountLock(Boolean.parseBoolean(userDataMap.get(UserIdentityDataStore.ACCOUNT_LOCK)));
-        }
-        if (userDataMap.get(UserIdentityDataStore.PASSWORD_TIME_STAMP) != null) {
-            String passwordTs = userDataMap.get(UserIdentityDataStore.PASSWORD_TIME_STAMP).trim();
-            if (!passwordTs.isEmpty()) {
-                setPasswordTimeStamp(Long.parseLong(passwordTs));
-            } else {
-                setPasswordTimeStamp(0);
-            }
         }
     }
 
@@ -205,6 +198,9 @@ public class UserIdentityClaimsDO implements Serializable {
     }
 
     public Map<String, String> getUserDataMap() {
+        if(userIdentityDataMap == null){
+            return Collections.emptyMap();
+        }
         return userIdentityDataMap;
     }
 
@@ -220,21 +216,23 @@ public class UserIdentityClaimsDO implements Serializable {
      */
     public void setUserIdentityDataClaim(String claim, String value) {
         userIdentityDataMap.put(claim, value);
-    }
-
-    public long getPasswordTimeStamp() {
-        return passwordTimeStamp;
-    }
-
-    /**
-     * @param passwordTimeStamp
-     * @return
-     */
-    public UserIdentityClaimsDO setPasswordTimeStamp(long passwordTimeStamp) {
-        this.passwordTimeStamp = passwordTimeStamp;
-        this.userIdentityDataMap.put(UserIdentityDataStore.PASSWORD_TIME_STAMP,
-                Long.toString(passwordTimeStamp));
-        return this;
+        if(StringUtils.isBlank(value)){
+            return;
+        } else if (UserIdentityDataStore.FAIL_LOGIN_ATTEMPTS.equalsIgnoreCase(claim)) {
+            setFailAttempts(Integer.parseInt(value));
+        } else if (UserIdentityDataStore.LAST_FAILED_LOGIN_ATTEMPT_TIME.equalsIgnoreCase(claim)) {
+            setLastFailAttemptTime(Long.parseLong(value));
+        } else if (UserIdentityDataStore.UNLOCKING_TIME.equalsIgnoreCase(claim)) {
+            setUnlockTime(Long.parseLong(value));
+        } else if (UserIdentityDataStore.ONE_TIME_PASSWORD.equalsIgnoreCase(claim)) {
+            setOneTimeLogin(Boolean.parseBoolean(claim));
+        } else if (UserIdentityDataStore.PASSWORD_CHANGE_REQUIRED.equalsIgnoreCase(claim)) {
+            setPasswordChangeRequired(Boolean.parseBoolean(value));
+        } else if (UserIdentityDataStore.LAST_LOGON_TIME.equalsIgnoreCase(claim)) {
+            setLastLogonTime(Long.parseLong(value));
+        } else if (UserIdentityDataStore.ACCOUNT_LOCK.equalsIgnoreCase(claim)) {
+            setAccountLock(Boolean.parseBoolean(value));
+        }
     }
 
     public int getTenantId() {
@@ -251,11 +249,11 @@ public class UserIdentityClaimsDO implements Serializable {
     }
 
     public char[] getTemporaryPassword() {
-        return temporaryPassword;
+        return temporaryPassword.clone();
     }
 
     public void setTemporaryPassword(char[] temporaryPassword) {
-        this.temporaryPassword = temporaryPassword;
+        this.temporaryPassword = temporaryPassword.clone();
     }
 
     public String getConfirmationCode() {
@@ -297,8 +295,8 @@ public class UserIdentityClaimsDO implements Serializable {
             }
         }
         // no security questions found
-        if (tempMap.size() == 0) {
-            return null;
+        if (tempMap.isEmpty()) {
+            return new UserIdentityClaimDTO[0];
         }
         // creating claim dtos
         UserIdentityClaimDTO[] securityQuestions = new UserIdentityClaimDTO[tempMap.size()];
@@ -345,8 +343,8 @@ public class UserIdentityClaimsDO implements Serializable {
             }
         }
         // no user claim found
-        if (tempMap.size() == 0) {
-            return null;
+        if (tempMap.isEmpty()) {
+            return new UserIdentityClaimDTO[0];
         }
         // creating claim dtos
         UserIdentityClaimDTO[] identityRecoveryData = new UserIdentityClaimDTO[tempMap.size()];

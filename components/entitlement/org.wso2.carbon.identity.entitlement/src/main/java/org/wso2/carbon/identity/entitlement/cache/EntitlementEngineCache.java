@@ -22,12 +22,18 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.caching.impl.CachingConstants;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
+import org.wso2.carbon.identity.entitlement.PDPConstants;
+import org.wso2.carbon.identity.entitlement.internal.EntitlementServiceComponent;
 import org.wso2.carbon.identity.entitlement.pdp.EntitlementEngine;
 import org.wso2.carbon.utils.multitenancy.MultitenantConstants;
 
 import javax.cache.Cache;
+import javax.cache.CacheBuilder;
+import javax.cache.CacheConfiguration;
 import javax.cache.CacheManager;
 import javax.cache.Caching;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 /**
  *
@@ -38,7 +44,13 @@ public class EntitlementEngineCache {
     public static final String ENTITLEMENT_ENGINE_CACHE =
             CachingConstants.LOCAL_CACHE_PREFIX + "ENTITLEMENT_ENGINE_CACHE";
     private static final EntitlementEngineCache instance = new EntitlementEngineCache();
+    private static CacheBuilder<Integer, EntitlementEngine> cacheBuilder;
     private static Log log = LogFactory.getLog(EntitlementEngineCache.class);
+    private static final long DEFAULT_ENTITLEMENT_ENGINE_CACHING_INTERVAL = 900;
+
+    private EntitlementEngineCache(){
+
+    }
 
     /**
      * Gets a new instance of EntitlementEngineCache.
@@ -52,10 +64,35 @@ public class EntitlementEngineCache {
 
     private Cache<Integer, EntitlementEngine> getEntitlementCache() {
         Cache<Integer, EntitlementEngine> cache;
-        CacheManager cacheManager = Caching.getCacheManagerFactory().
-                getCacheManager(ENTITLEMENT_ENGINE_CACHE_MANAGER);
+        CacheManager cacheManager = Caching.getCacheManagerFactory().getCacheManager(ENTITLEMENT_ENGINE_CACHE_MANAGER);
         if (cacheManager != null) {
-            cache = cacheManager.getCache(ENTITLEMENT_ENGINE_CACHE);
+            if (cacheBuilder == null) {
+                Properties properties = EntitlementServiceComponent.getEntitlementConfig().getEngineProperties();
+                String engineCachingInterval = properties.getProperty(PDPConstants.ENTITLEMENT_ENGINE_CACHING_INTERVAL);
+                long entitlementEngineCachingInterval = DEFAULT_ENTITLEMENT_ENGINE_CACHING_INTERVAL;
+                if (engineCachingInterval != null) {
+                    try {
+                        entitlementEngineCachingInterval = Long.parseLong(engineCachingInterval);
+                    } catch (NumberFormatException e) {
+                        log.warn("Invalid value for " + PDPConstants.ENTITLEMENT_ENGINE_CACHING_INTERVAL + ". Using " +
+                                 "default value " + entitlementEngineCachingInterval + " seconds.");
+                    }
+                } else {
+                    if (log.isDebugEnabled()) {
+                        log.debug(PDPConstants.ENTITLEMENT_ENGINE_CACHING_INTERVAL + " not set. Using default value " +
+                                  entitlementEngineCachingInterval + " seconds.");
+                    }
+                }
+                cacheManager.removeCache(ENTITLEMENT_ENGINE_CACHE);
+                cacheBuilder = cacheManager.<Integer, EntitlementEngine>createCacheBuilder(ENTITLEMENT_ENGINE_CACHE).
+                        setExpiry(CacheConfiguration.ExpiryType.ACCESSED,
+                                new CacheConfiguration.Duration(TimeUnit.SECONDS, entitlementEngineCachingInterval)).
+                        setExpiry(CacheConfiguration.ExpiryType.MODIFIED,
+                                new CacheConfiguration.Duration(TimeUnit.SECONDS, entitlementEngineCachingInterval));
+                cache = cacheBuilder.build();
+            } else {
+                cache = cacheManager.getCache(ENTITLEMENT_ENGINE_CACHE);
+            }
         } else {
             cache = Caching.getCacheManager().getCache(ENTITLEMENT_ENGINE_CACHE);
         }

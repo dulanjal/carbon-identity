@@ -1,20 +1,20 @@
 /*
-*  Copyright (c) 2005-2013, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
-*
-*  WSO2 Inc. licenses this file to you under the Apache License,
-*  Version 2.0 (the "License"); you may not use this file except
-*  in compliance with the License.
-*  You may obtain a copy of the License at
-*
-*    http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing,
-* software distributed under the License is distributed on an
-* "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-* KIND, either express or implied.  See the License for the
-* specific language governing permissions and limitations
-* under the License.
-*/
+ * Copyright (c) 2013, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 
 package org.wso2.carbon.identity.application.authentication.framework.config.builder;
 
@@ -31,8 +31,10 @@ import org.wso2.carbon.identity.application.authentication.framework.config.mode
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkUtils;
 import org.wso2.carbon.identity.application.common.model.IdentityProvider;
+import org.wso2.carbon.identity.application.common.util.IdentityApplicationConstants;
 import org.wso2.carbon.identity.application.common.util.IdentityApplicationManagementUtil;
-import org.wso2.carbon.utils.CarbonUtils;
+import org.wso2.carbon.identity.core.util.IdentityUtil;
+import org.wso2.carbon.utils.ServerConstants;
 
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLStreamException;
@@ -40,15 +42,24 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.*;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Stack;
 
 /**
  * Application Authenticators Framework configuration reader.
  */
 public class FileBasedConfigurationBuilder {
 
-    private static Log log = LogFactory.getLog(FileBasedConfigurationBuilder.class);
-    private static FileBasedConfigurationBuilder instance;
+    private static final Log log = LogFactory.getLog(FileBasedConfigurationBuilder.class);
+    private static volatile FileBasedConfigurationBuilder instance;
+    private static String configFilePath;
+    private static OMElement rootElement;
+    private static Map<String, Object> configuration = new HashMap<String, Object>();
 
     private String authenticationEndpointURL;
 
@@ -63,256 +74,434 @@ public class FileBasedConfigurationBuilder {
     private boolean isTenantDomainDropdownEnabled;
 
     private boolean isDumbMode;
-    private List<ExternalIdPConfig> idpList = new ArrayList<ExternalIdPConfig>();
-    private List<SequenceConfig> sequenceList = new ArrayList<SequenceConfig>();
-    private List<String> authEndpointQueryParams = new ArrayList<String>();
-    private Map<String, AuthenticatorConfig> authenticatorConfigMap = new Hashtable<String, AuthenticatorConfig>();
-    private Map<String, Object> extensions = new Hashtable<String, Object>();
+    private List<ExternalIdPConfig> idpList = new ArrayList<>();
+    private List<SequenceConfig> sequenceList = new ArrayList<>();
+    private List<String> authEndpointQueryParams = new ArrayList<>();
+    private Map<String, AuthenticatorConfig> authenticatorConfigMap = new HashMap<>();
+    private Map<String, Object> extensions = new HashMap<>();
     private int maxLoginAttemptCount = 5;
-    private Map<String, String> authenticatorNameMappings = new HashMap<String, String>();
-    private Map<String, Integer> cacheTimeouts = new HashMap<String, Integer>();
+    private Map<String, String> authenticatorNameMappings = new HashMap<>();
+    private Map<String, Integer> cacheTimeouts = new HashMap<>();
     private String authEndpointQueryParamsAction;
     private boolean authEndpointQueryParamsConfigAvailable;
 
     public static FileBasedConfigurationBuilder getInstance() {
         if (instance == null) {
-            instance = new FileBasedConfigurationBuilder();
+            synchronized (FileBasedConfigurationBuilder.class){
+                if(instance == null) {
+                    instance = new FileBasedConfigurationBuilder();
+                }
+            }
         }
-
         return instance;
+    }
+
+    public static FileBasedConfigurationBuilder getInstance(String filePath) {
+        configFilePath = filePath;
+        return getInstance();
+    }
+
+    /**
+     * Returns the element with the provided local part
+     *
+     * @param localPart local part name
+     * @return Corresponding OMElement
+     */
+    public OMElement getConfigElement(String localPart) {
+        return rootElement.getFirstChildWithName(
+                IdentityApplicationManagementUtil.getQNameWithIdentityApplicationNS(localPart));
+    }
+
+    public Map<String, Object> getConfiguration() {
+        return configuration;
+    }
+
+    private FileBasedConfigurationBuilder(){
+        buildConfiguration();
     }
 
     /**
      * Read the authenticator info from the file and populate the in-memory model
      */
-    public void build() {
+    private void buildConfiguration() {
 
-        String authenticatorsFilePath = CarbonUtils.getCarbonConfigDirPath() + File.separator +
-                "security" + File.separator + FrameworkConstants.Config.AUTHENTICATORS_FILE_NAME;
-        FileInputStream fileInputStream = null;
-
+        InputStream inStream = null;
+        File configFile = null;
         try {
-            fileInputStream = new FileInputStream(new File(authenticatorsFilePath));
-            OMElement documentElement = new StAXOMBuilder(fileInputStream).getDocumentElement();
+            if (configFilePath != null) {
+                configFile = new File(configFilePath);
+            } else {
+                configFile = new File(IdentityUtil.getIdentityConfigDirPath(),
+                        IdentityApplicationConstants.APPLICATION_AUTHENTICATION_CONGIG);
+            }
+            if (configFile.exists()) {
+                inStream = new FileInputStream(configFile);
+            }
+            if (inStream == null) {
+                String message = "Identity Application Authentication Framework configuration not found";
+                log.error(message);
+                throw new FileNotFoundException(message);
+            }
+            StAXOMBuilder builder = new StAXOMBuilder(inStream);
+            rootElement = builder.getDocumentElement();
+            Stack<String> nameStack = new Stack<String>();
+            readChildElements(rootElement, nameStack);
 
             //########### Read Authentication Endpoint URL ###########
-            OMElement authEndpointURLElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATION_ENDPOINT_URL));
-
-            if (authEndpointURLElem != null) {
-                authenticationEndpointURL = authEndpointURLElem.getText();
-            }
+            readAuthenticationEndpointURL(rootElement);
 
             //########### Read tenant data listener URLs ###########
-            OMElement tenantDataURLsElem =
-                    documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                            getQNameWithIdentityApplicationNS(
-                                    FrameworkConstants.Config.QNAME_TENANT_DATA_LISTENER_URLS));
-
-            if (tenantDataURLsElem != null) {
-                for (Iterator tenantDataURLElems = tenantDataURLsElem.getChildrenWithLocalName(
-                        FrameworkConstants.Config.ELEM_TENANT_DATA_LISTENER_URL);
-                     tenantDataURLElems.hasNext(); ) {
-
-                    OMElement tenantDataListenerURLElem = (OMElement) tenantDataURLElems.next();
-                    if (tenantDataListenerURLElem != null &&
-                            StringUtils.isNotEmpty(tenantDataListenerURLElem.getText())) {
-                        tenantDataEndpointURLs.add(tenantDataListenerURLElem.getText());
-                    }
-                }
-            }
+            readTenantDataListenerURLs(rootElement);
 
             //########### Read tenant domain dropdown enabled value ###########
-            OMElement tenantDomainDropdownElem =
-                    documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                            getQNameWithIdentityApplicationNS(
-                                    FrameworkConstants.Config.QNAME_TENANT_DOMAIN_DROPDOWN_ENABLED));
-
-            if (tenantDomainDropdownElem != null) {
-                isTenantDomainDropdownEnabled = Boolean.parseBoolean(tenantDomainDropdownElem.getText());
-            }
+            readTenantDomainDropdownEnabledValue(rootElement);
 
             //########### Read Proxy Mode ###########
-            //TODO:get proxy modes from an enum?
-            OMElement proxyModeElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_PROXY_MODE));
-
-            if (proxyModeElem != null && proxyModeElem.getText() != null && !proxyModeElem.getText().isEmpty()) {
-                if (proxyModeElem.getText().equalsIgnoreCase("dumb")) {
-                    isDumbMode = true;
-                }
-            }
+            readProxyModes(rootElement);
 
             //########### Read Maximum Login Attempt Count ###########
-            OMElement maxLoginAttemptCountElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_MAX_LOGIN_ATTEMPT_COUNT));
-
-            if (maxLoginAttemptCountElem != null) {
-                String maxLoginAttemptCountStr = maxLoginAttemptCountElem.getText();
-
-                if (maxLoginAttemptCountStr != null && !maxLoginAttemptCountStr.isEmpty()) {
-                    try {
-                        maxLoginAttemptCount = Integer.parseInt(maxLoginAttemptCountElem.getText());
-                    } catch (NumberFormatException e) {
-                        log.error("MaxLoginAttemptCount must be a number");
-                        maxLoginAttemptCount = 5;
-                    }
-                }
-            }
+            readMaximumLoginAttemptCount(rootElement);
 
             // ########### Read Authentication Endpoint Query Params ###########
-            OMElement authEndpointQueryParamsElem = documentElement
-                    .getFirstChildWithName(IdentityApplicationManagementUtil
-                            .getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTH_ENDPOINT_QUERY_PARAMS));
-
-            if (authEndpointQueryParamsElem != null) {
-
-                authEndpointQueryParamsConfigAvailable = true;
-                OMAttribute actionAttr = authEndpointQueryParamsElem.getAttribute(new QName(
-                        FrameworkConstants.Config.ATTR_AUTH_ENDPOINT_QUERY_PARAM_ACTION));
-                authEndpointQueryParamsAction = FrameworkConstants.AUTH_ENDPOINT_QUERY_PARAMS_ACTION_EXCLUDE;
-
-                if (actionAttr != null) {
-                    String actionValue = actionAttr.getAttributeValue();
-
-                    if (actionValue != null && !actionValue.isEmpty()) {
-                        authEndpointQueryParamsAction = actionValue;
-                    }
-                }
-
-
-                for (Iterator authEndpointQueryParamElems = authEndpointQueryParamsElem
-                        .getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTH_ENDPOINT_QUERY_PARAM); authEndpointQueryParamElems
-                             .hasNext(); ) {
-                    String queryParamName = processAuthEndpointQueryParamElem((OMElement) authEndpointQueryParamElems
-                            .next());
-
-                    if (queryParamName != null) {
-                        this.authEndpointQueryParams.add(queryParamName);
-                    }
-                }
-            }
+            readAuthenticationEndpointQueryParams(rootElement);
 
             //########### Read Extension Points ###########
-            OMElement extensionsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_EXTENSIONS));
-
-            if (extensionsElem != null) {
-                for (Iterator extChildElems = extensionsElem.getChildElements(); extChildElems.hasNext(); ) {
-                    OMElement extensionElem = (OMElement) extChildElems.next();
-
-                    Class<?> clazz = null;
-                    Object obj = null;
-
-                    try {
-                        clazz = Class.forName(extensionElem.getText());
-                        obj = clazz.newInstance();
-                        extensions.put(extensionElem.getLocalName(), obj);
-                    } catch (ClassNotFoundException e) {
-                        log.error("ClassNotFoundException while trying to find class " + extensionElem.getText());
-                    } catch (InstantiationException e) {
-                        log.error("InstantiationException while trying to instantiate class " + extensionElem.getText());
-                    } catch (IllegalAccessException e) {
-                        log.error("IllegalAccessException while trying to instantiate class " + extensionElem.getText());
-                    }
-                }
-            }
+            readExtensionPoints(rootElement);
 
             //########### Read Cache Timeouts ###########
-            OMElement cacheTimeoutsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_CACHE_TIMEOUTS));
-
-            if (cacheTimeoutsElem != null) {
-                for (Iterator cacheChildElems = cacheTimeoutsElem.getChildElements(); cacheChildElems.hasNext(); ) {
-                    OMElement cacheTimeoutElem = (OMElement) cacheChildElems.next();
-                    String value = cacheTimeoutElem.getText();
-
-                    if (value != null && value.trim().length() > 0) {
-                        Integer timeout;
-
-                        try {
-                            timeout = Integer.valueOf(value);
-                            cacheTimeouts.put(cacheTimeoutElem.getLocalName(), timeout);
-                        } catch (NumberFormatException e) {
-                            log.warn(cacheTimeoutElem.getLocalName() + "doesn't have a numeric value specified." +
-                                    "Entry is ignored");
-                        }
-                    }
-                }
-            }
+            readCacheTimeouts(rootElement);
 
             //########### Read Authenticator Name Mappings ###########
-            OMElement authenticatorNameMappingsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATOR_NAME_MAPPINGS));
-
-            if (authenticatorNameMappingsElem != null) {
-                for (Iterator authenticatorNameMappingElems = authenticatorNameMappingsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTHENTICATOR_NAME_MAPPING);
-                     authenticatorNameMappingElems.hasNext(); ) {
-                    processAuthenticatorNameMappingElement((OMElement) authenticatorNameMappingElems.next());
-                }
-            }
+            readAuthenticatorNameMappings(rootElement);
 
             //########### Read Authenticator Configs ###########
-            OMElement authenticatorConfigsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATOR_CONFIGS));
-
-            if (authenticatorConfigsElem != null) {
-                // for each and every authenticator defined, create an AuthenticatorConfig instance
-                for (Iterator authenticatorConfigElements = authenticatorConfigsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTHENTICATOR_CONFIG);
-                     authenticatorConfigElements.hasNext(); ) {
-                    AuthenticatorConfig authenticatorConfig = processAuthenticatorConfigElement((OMElement) authenticatorConfigElements.next());
-
-                    if (authenticatorConfig != null) {
-                        this.authenticatorConfigMap.put(authenticatorConfig.getName(), authenticatorConfig);
-                    }
-                }
-            }
+            readAuthenticatorConfigs(rootElement);
 
             //########### Read IdP Configs ###########
-            OMElement idpConfigsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_IDP_CONFIGS));
-
-            if (idpConfigsElem != null) {
-                // for each and every external idp defined, create an ExternalIdPConfig instance
-                for (Iterator idpConfigElements = idpConfigsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_IDP_CONFIG);
-                     idpConfigElements.hasNext(); ) {
-
-                    ExternalIdPConfig idpConfig = processIdPConfigElement((OMElement) idpConfigElements.next());
-
-                    if (idpConfig != null) {
-                        idpList.add(idpConfig);
-                    }
-                }
-            }
+            readIdpConfigs(rootElement);
 
             //########### Read Sequence Configs ###########
-            OMElement sequencesElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
-                    getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_SEQUENCES));
+            readSequenceConfigs(rootElement);
 
-            if (sequencesElem != null) {
-                // for each every application defined, create a ApplicationBean instance
-                for (Iterator sequenceElements = sequencesElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_SEQUENCE);
-                     sequenceElements.hasNext(); ) {
-                    SequenceConfig sequenceConfig = processSequenceElement((OMElement) sequenceElements.next());
+        } catch (FileNotFoundException e) {
+            log.error(IdentityApplicationConstants.APPLICATION_AUTHENTICATION_CONGIG + " file is not available", e);
+        } catch (XMLStreamException e) {
+            log.error("Error reading the " + IdentityApplicationConstants.APPLICATION_AUTHENTICATION_CONGIG, e);
+        } finally {
+            try {
+                if (inStream != null) {
+                    inStream.close();
+                }
+            } catch (IOException e) {
+                log.error("Error occurred while closing the FileInputStream after reading " +
+                        "Identity Application Authentication Framework configuration", e);
+            }
+        }
+    }
 
-                    if (sequenceConfig != null) {
-                        //this.applicationConfigMap.put(sequenceDO.getName(), sequenceDO);
-                        this.sequenceList.add(sequenceConfig);
+    private void readChildElements(OMElement serverConfig, Stack<String> nameStack) {
+
+        for (Iterator childElements = serverConfig.getChildElements(); childElements.hasNext(); ) {
+            OMElement element = (OMElement) childElements.next();
+            nameStack.push(element.getLocalName());
+            if (elementHasText(element)) {
+                String key = getKey(nameStack);
+                Object currentObject = configuration.get(key);
+                String value = replaceSystemProperty(element.getText());
+                if (currentObject == null) {
+                    configuration.put(key, value);
+                } else if (currentObject instanceof ArrayList) {
+                    List<String> list = (ArrayList) currentObject;
+                    if (!list.contains(value)) {
+                        list.add(value);
+                    }
+                } else {
+                    if (!value.equals(currentObject)) {
+                        List arrayList = new ArrayList(2);
+                        arrayList.add(currentObject);
+                        arrayList.add(value);
+                        configuration.put(key, arrayList);
                     }
                 }
             }
-        } catch (FileNotFoundException e) {
-            log.error(FrameworkConstants.Config.AUTHENTICATORS_FILE_NAME + " file is not available");
-        } catch (XMLStreamException e) {
-            log.error("Error reading the " + FrameworkConstants.Config.AUTHENTICATORS_FILE_NAME);
-        } finally {
-            try {
-                if (fileInputStream != null) {
-                    fileInputStream.close();
-                }
-            } catch (IOException e) {
-                log.warn("Unable to close the file input stream created for " + FrameworkConstants.Config.AUTHENTICATORS_FILE_NAME);
+            readChildElements(element, nameStack);
+            nameStack.pop();
+        }
+    }
+
+    private String getKey(Stack<String> nameStack) {
+
+        StringBuilder key = new StringBuilder();
+        for (int i = 0; i < nameStack.size(); i++) {
+            String name = nameStack.elementAt(i);
+            key.append(name).append(".");
+        }
+        key.deleteCharAt(key.lastIndexOf("."));
+        return key.toString();
+    }
+
+    private boolean elementHasText(OMElement element) {
+
+        String text = element.getText();
+        return text != null && text.trim().length() != 0;
+    }
+
+    private String replaceSystemProperty(String text) {
+
+        int indexOfStartingChars = -1;
+        int indexOfClosingBrace;
+        String tmpText = null;
+        // The following condition deals with properties.
+        // Properties are specified as ${system.property},
+        // and are assumed to be System properties
+        while (indexOfStartingChars < text.indexOf("${")
+                && (indexOfStartingChars = text.indexOf("${")) != -1
+                && (indexOfClosingBrace = text.indexOf("}")) != -1) { // Is a property used?
+            String sysProp = text.substring(indexOfStartingChars + 2, indexOfClosingBrace);
+            String propValue = System.getProperty(sysProp);
+            if (propValue != null) {
+                tmpText = text.substring(0, indexOfStartingChars) + propValue
+                        + text.substring(indexOfClosingBrace + 1);
             }
+
+            if ((ServerConstants.CARBON_HOME).equals(sysProp) &&
+                    (".").equals(System.getProperty(ServerConstants.CARBON_HOME))) {
+                tmpText = new File(".").getAbsolutePath() + File.separator + text;
+
+            }
+        }
+        return tmpText;
+    }
+
+    private void readSequenceConfigs(OMElement documentElement) {
+        OMElement sequencesElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_SEQUENCES));
+
+        if (sequencesElem != null) {
+            // for each every application defined, create a ApplicationBean instance
+            for (Iterator sequenceElements = sequencesElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_SEQUENCE);
+                 sequenceElements.hasNext(); ) {
+                SequenceConfig sequenceConfig = processSequenceElement((OMElement) sequenceElements.next());
+
+                if (sequenceConfig != null) {
+                    this.sequenceList.add(sequenceConfig);
+                }
+            }
+        }
+    }
+
+    private void readIdpConfigs(OMElement documentElement) {
+        OMElement idpConfigsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_IDP_CONFIGS));
+
+        if (idpConfigsElem != null) {
+            // for each and every external idp defined, create an ExternalIdPConfig instance
+            for (Iterator idpConfigElements = idpConfigsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_IDP_CONFIG);
+                 idpConfigElements.hasNext(); ) {
+
+                ExternalIdPConfig idpConfig = processIdPConfigElement((OMElement) idpConfigElements.next());
+
+                if (idpConfig != null) {
+                    idpList.add(idpConfig);
+                }
+            }
+        }
+    }
+
+    private void readAuthenticatorConfigs(OMElement documentElement) {
+        OMElement authenticatorConfigsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATOR_CONFIGS));
+
+        if (authenticatorConfigsElem != null) {
+            // for each and every authenticator defined, create an AuthenticatorConfig instance
+            for (Iterator authenticatorConfigElements = authenticatorConfigsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTHENTICATOR_CONFIG);
+                 authenticatorConfigElements.hasNext(); ) {
+                AuthenticatorConfig authenticatorConfig = processAuthenticatorConfigElement((OMElement) authenticatorConfigElements.next());
+
+                if (authenticatorConfig != null) {
+                    this.authenticatorConfigMap.put(authenticatorConfig.getName(), authenticatorConfig);
+                }
+            }
+        }
+    }
+
+    private void readAuthenticatorNameMappings(OMElement documentElement) {
+        OMElement authenticatorNameMappingsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATOR_NAME_MAPPINGS));
+
+        if (authenticatorNameMappingsElem != null) {
+            for (Iterator authenticatorNameMappingElems = authenticatorNameMappingsElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTHENTICATOR_NAME_MAPPING);
+                 authenticatorNameMappingElems.hasNext(); ) {
+                processAuthenticatorNameMappingElement((OMElement) authenticatorNameMappingElems.next());
+            }
+        }
+    }
+
+    private void readCacheTimeouts(OMElement documentElement) {
+        OMElement cacheTimeoutsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_CACHE_TIMEOUTS));
+
+        if (cacheTimeoutsElem != null) {
+            for (Iterator cacheChildElems = cacheTimeoutsElem.getChildElements(); cacheChildElems.hasNext(); ) {
+                OMElement cacheTimeoutElem = (OMElement) cacheChildElems.next();
+                String value = cacheTimeoutElem.getText();
+
+                if (value != null && value.trim().length() > 0) {
+                    readCacheTimeOut(cacheTimeoutElem, value);
+                }
+            }
+        }
+    }
+
+    private void readExtensionPoints(OMElement documentElement) {
+        OMElement extensionsElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_EXTENSIONS));
+
+        if (extensionsElem != null) {
+            for (Iterator extChildElems = extensionsElem.getChildElements(); extChildElems.hasNext(); ) {
+                OMElement extensionElem = (OMElement) extChildElems.next();
+                instantiateClass(extensionElem);
+            }
+        }
+    }
+
+    private void readAuthenticationEndpointQueryParams(OMElement documentElement) {
+        OMElement authEndpointQueryParamsElem = documentElement
+                .getFirstChildWithName(IdentityApplicationManagementUtil
+                                               .getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTH_ENDPOINT_QUERY_PARAMS));
+
+        if (authEndpointQueryParamsElem != null) {
+
+            authEndpointQueryParamsConfigAvailable = true;
+            OMAttribute actionAttr = authEndpointQueryParamsElem.getAttribute(new QName(
+                    FrameworkConstants.Config.ATTR_AUTH_ENDPOINT_QUERY_PARAM_ACTION));
+            authEndpointQueryParamsAction = FrameworkConstants.AUTH_ENDPOINT_QUERY_PARAMS_ACTION_EXCLUDE;
+
+            if (actionAttr != null) {
+                String actionValue = actionAttr.getAttributeValue();
+
+                if (actionValue != null && !actionValue.isEmpty()) {
+                    authEndpointQueryParamsAction = actionValue;
+                }
+            }
+
+
+            for (Iterator authEndpointQueryParamElems = authEndpointQueryParamsElem
+                    .getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTH_ENDPOINT_QUERY_PARAM); authEndpointQueryParamElems
+                         .hasNext(); ) {
+                String queryParamName = processAuthEndpointQueryParamElem((OMElement) authEndpointQueryParamElems
+                        .next());
+
+                if (queryParamName != null) {
+                    this.authEndpointQueryParams.add(queryParamName);
+                }
+            }
+        }
+    }
+
+    private void readMaximumLoginAttemptCount(OMElement documentElement) {
+        OMElement maxLoginAttemptCountElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_MAX_LOGIN_ATTEMPT_COUNT));
+
+        if (maxLoginAttemptCountElem != null) {
+            String maxLoginAttemptCountStr = maxLoginAttemptCountElem.getText();
+
+            if (maxLoginAttemptCountStr != null && !maxLoginAttemptCountStr.isEmpty()) {
+                try {
+                    maxLoginAttemptCount = Integer.parseInt(maxLoginAttemptCountElem.getText());
+                } catch (NumberFormatException e) {
+                    log.error("MaxLoginAttemptCount must be a number");
+                    maxLoginAttemptCount = 5;
+                }
+            }
+        }
+    }
+
+    private void readProxyModes(OMElement documentElement) {
+        //TODO:get proxy modes from an enum?
+        OMElement proxyModeElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_PROXY_MODE));
+
+        if (proxyModeElem != null && proxyModeElem.getText() != null && !proxyModeElem.getText().isEmpty() &&
+            "dumb".equalsIgnoreCase(proxyModeElem.getText())) {
+            isDumbMode = true;
+        }
+    }
+
+    private void readTenantDomainDropdownEnabledValue(OMElement documentElement) {
+        OMElement tenantDomainDropdownElem =
+                documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                        getQNameWithIdentityApplicationNS(
+                                FrameworkConstants.Config.QNAME_TENANT_DOMAIN_DROPDOWN_ENABLED));
+
+        if (tenantDomainDropdownElem != null) {
+            isTenantDomainDropdownEnabled = Boolean.parseBoolean(tenantDomainDropdownElem.getText());
+        }
+    }
+
+    private void readTenantDataListenerURLs(OMElement documentElement) {
+        OMElement tenantDataURLsElem =
+                documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                        getQNameWithIdentityApplicationNS(
+                                FrameworkConstants.Config.QNAME_TENANT_DATA_LISTENER_URLS));
+
+        if (tenantDataURLsElem != null) {
+            for (Iterator tenantDataURLElems = tenantDataURLsElem.getChildrenWithLocalName(
+                    FrameworkConstants.Config.ELEM_TENANT_DATA_LISTENER_URL);
+                 tenantDataURLElems.hasNext(); ) {
+
+                OMElement tenantDataListenerURLElem = (OMElement) tenantDataURLElems.next();
+                if (tenantDataListenerURLElem != null &&
+                    StringUtils.isNotEmpty(tenantDataListenerURLElem.getText())) {
+                    tenantDataEndpointURLs.add(tenantDataListenerURLElem.getText());
+                }
+            }
+        }
+    }
+
+    private void readAuthenticationEndpointURL(OMElement documentElement) {
+        OMElement authEndpointURLElem = documentElement.getFirstChildWithName(IdentityApplicationManagementUtil.
+                getQNameWithIdentityApplicationNS(FrameworkConstants.Config.QNAME_AUTHENTICATION_ENDPOINT_URL));
+
+        if (authEndpointURLElem != null) {
+            authenticationEndpointURL = authEndpointURLElem.getText();
+        }
+    }
+
+    private void readCacheTimeOut(OMElement cacheTimeoutElem, String value) {
+        Integer timeout;
+
+        try {
+            timeout = Integer.valueOf(value);
+            cacheTimeouts.put(cacheTimeoutElem.getLocalName(), timeout);
+        } catch (NumberFormatException e) {
+            log.warn(cacheTimeoutElem.getLocalName() + "doesn't have a numeric value specified." +
+                     "Entry is ignored");
+        }
+    }
+
+    private void instantiateClass(OMElement extensionElem) {
+        Class<?> clazz;
+        Object obj;
+        try {
+            clazz = Class.forName(extensionElem.getText());
+            obj = clazz.newInstance();
+            extensions.put(extensionElem.getLocalName(), obj);
+        } catch (ClassNotFoundException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Stack trace skipped in Error log  : ", e);
+            }
+            log.error("ClassNotFoundException while trying to find class " + extensionElem.getText());
+        } catch (InstantiationException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Stack trace skipped in Error log   : ", e);
+            }
+            log.error("InstantiationException while trying to instantiate class " + extensionElem.getText());
+        } catch (IllegalAccessException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Stack trace skipped in Error log  : ", e);
+            }
+            log.error("IllegalAccessException while trying to instantiate class " + extensionElem.getText());
         }
     }
 
@@ -350,18 +539,6 @@ public class FileBasedConfigurationBuilder {
      */
     private SequenceConfig processSequenceElement(OMElement sequenceElem) {
         SequenceConfig sequenceConfig = new SequenceConfig();
-        /*OMAttribute nameAttr = sequenceElem.getAttribute(new QName(ApplicationAuthenticatorConstants.Config.ATTR_APPLICATION_NAME));
-    	
-    	String seqName = "default";
-    	
-		if (nameAttr != null) {
-			log.warn("Each Sequence should have an unique name attribute. +"
-			         + "This authenticator sequence will not be registered.");
-			return null;
-			seqName = nameAttr.getAttributeValue();
-		}
-		
-    	sequenceDO.setName(seqName);*/
 
         String applicationId = "default";
         OMAttribute appIdAttr = sequenceElem.getAttribute(new QName(FrameworkConstants.Config.ATTR_APPLICATION_ID));
@@ -432,11 +609,11 @@ public class FileBasedConfigurationBuilder {
 
         if (orderAttr == null) {
             log.warn("Each Step Configuration should have an order. +"
-                    + "Authenticators under this Step will not be registered.");
+                     + "Authenticators under this Step will not be registered.");
             return null;
         }
 
-        stepConfig.setOrder(Integer.valueOf(orderAttr.getAttributeValue()));
+        stepConfig.setOrder(Integer.parseInt(orderAttr.getAttributeValue()));
 
         for (Iterator authenticatorElements = stepElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_AUTHENTICATOR);
              authenticatorElements.hasNext(); ) {
@@ -454,12 +631,10 @@ public class FileBasedConfigurationBuilder {
                     authenticatorConfig.getIdpNames().add(idp);
                 }
             } else {
-                //authenticatorConfig.getIdpNameList().add("internal");
                 authenticatorConfig.getIdpNames().add(FrameworkConstants.LOCAL_IDP_NAME);
             }
 
             stepConfig.getAuthenticatorList().add(authenticatorConfig);
-            //stepDO.getAuthenticatorMappings().add(authenticatorName);processIdPConfigElement
         }
 
         return stepConfig;
@@ -478,7 +653,7 @@ public class FileBasedConfigurationBuilder {
         // if the name is not given, do not register this authenticator
         if (nameAttr == null) {
             log.warn("Each Authenticator Configuration should have a unique name attribute. +" +
-                    "This Authenticator will not be registered.");
+                     "This Authenticator will not be registered.");
             return null;
         }
 
@@ -494,7 +669,7 @@ public class FileBasedConfigurationBuilder {
         }
 
         // read the config parameters
-        Map<String, String> parameterMap = new Hashtable<String, String>();
+        Map<String, String> parameterMap = new HashMap<>();
 
         for (Iterator paramIterator = authenticatorConfigElem.getChildrenWithLocalName(FrameworkConstants.Config.ELEM_PARAMETER);
              paramIterator.hasNext(); ) {
@@ -526,7 +701,7 @@ public class FileBasedConfigurationBuilder {
         }
 
         // read the config parameters
-        Map<String, String> parameterMap = new Hashtable<String, String>();
+        Map<String, String> parameterMap = new HashMap<>();
 
         for (Iterator paramIterator = idpConfigElem.getChildrenWithLocalName("Parameter");
              paramIterator.hasNext(); ) {

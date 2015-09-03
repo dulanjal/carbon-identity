@@ -1,20 +1,20 @@
 /*
-*Copyright (c) 2005-2013, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
-*
-*WSO2 Inc. licenses this file to you under the Apache License,
-*Version 2.0 (the "License"); you may not use this file except
-*in compliance with the License.
-*You may obtain a copy of the License at
-*
-*http://www.apache.org/licenses/LICENSE-2.0
-*
-*Unless required by applicable law or agreed to in writing,
-*software distributed under the License is distributed on an
-*"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-*KIND, either express or implied.  See the License for the
-*specific language governing permissions and limitations
-*under the License.
-*/
+ * Copyright (c) 2013, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ *
+ * WSO2 Inc. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 
 package org.wso2.carbon.identity.oauth2.token;
 
@@ -62,7 +62,7 @@ public class AccessTokenIssuer {
 
         authzGrantHandlers = OAuthServerConfiguration.getInstance().getSupportedGrantTypes();
         clientAuthenticationHandlers = OAuthServerConfiguration.getInstance().getSupportedClientAuthHandlers();
-        appInfoCache = AppInfoCache.getInstance();
+        appInfoCache = AppInfoCache.getInstance(OAuthServerConfiguration.getInstance().getAppInfoCacheTimeout());
         if (appInfoCache != null) {
             if (log.isDebugEnabled()) {
                 log.debug("Successfully created AppInfoCache under " + OAuthConstants.OAUTH_CACHE_MANAGER);
@@ -107,6 +107,7 @@ public class AccessTokenIssuer {
                     tokenRespDTO = handleError(
                             OAuthConstants.OAuthError.TokenResponse.UNSUPPORTED_CLIENT_AUTHENTICATION_METHOD,
                             "Unsupported Client Authentication Method!", tokenReqDTO);
+                    setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
                     return tokenRespDTO;
                 }
                 authenticatorHandlerIndex = i;
@@ -118,6 +119,7 @@ public class AccessTokenIssuer {
             tokenRespDTO = handleError(
                     OAuthConstants.OAuthError.TokenResponse.UNSUPPORTED_CLIENT_AUTHENTICATION_METHOD,
                     "Unsupported Client Authentication Method!", tokenReqDTO);
+            setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
             return tokenRespDTO;
         }
 
@@ -135,15 +137,16 @@ public class AccessTokenIssuer {
         // loading the stored application data
         OAuthAppDO oAuthAppDO = getAppInformation(tokenReqDTO);
         String applicationName = oAuthAppDO.getApplicationName();
-        String userName = tokReqMsgCtx.getAuthorizedUser();
         if (!authzGrantHandler.isOfTypeApplicationUser()) {
-            tokReqMsgCtx.setAuthorizedUser(oAuthAppDO.getUserName());
+            tokReqMsgCtx.setAuthorizedUser(OAuth2Util.getUserFromUserName(oAuthAppDO.getUserName()));
             tokReqMsgCtx.setTenantID(oAuthAppDO.getTenantId());
         }
 
         boolean isValidGrant = authzGrantHandler.validateGrant(tokReqMsgCtx);
         boolean isAuthorized = authzGrantHandler.authorizeAccessDelegation(tokReqMsgCtx);
         boolean isValidScope = authzGrantHandler.validateScope(tokReqMsgCtx);
+
+        String userName = tokReqMsgCtx.getAuthorizedUser().toString();
 
         //boolean isAuthenticated = true;
         if (!isAuthenticated) {
@@ -152,6 +155,7 @@ public class AccessTokenIssuer {
                     "user-name=" + userName + " to application=" + applicationName);
             tokenRespDTO = handleError(OAuthError.TokenResponse.INVALID_CLIENT,
                     "Client credentials are invalid.", tokenReqDTO);
+            setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
             return tokenRespDTO;
         }
 
@@ -162,6 +166,7 @@ public class AccessTokenIssuer {
                     "" + "user-name=" + userName + " to application=" + applicationName);
             tokenRespDTO = handleError(OAuthError.TokenResponse.INVALID_GRANT,
                     "Provided Authorization Grant is invalid.", tokenReqDTO);
+            setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
             return tokenRespDTO;
         }
 
@@ -172,6 +177,7 @@ public class AccessTokenIssuer {
                     + tokenReqDTO.getClientId() + " " + "user-name=" + userName + " to application=" + applicationName);
             tokenRespDTO = handleError(OAuthError.TokenResponse.UNAUTHORIZED_CLIENT,
                     "Unauthorized Client!", tokenReqDTO);
+            setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
             return tokenRespDTO;
         }
 
@@ -181,6 +187,7 @@ public class AccessTokenIssuer {
             log.debug("Invalid Scope provided. client-id=" + tokenReqDTO.getClientId() + " " +
                     "" + "user-name=" + userName + " to application=" + applicationName);
             tokenRespDTO = handleError(OAuthError.TokenResponse.INVALID_SCOPE, "Invalid Scope!", tokenReqDTO);
+            setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
             return tokenRespDTO;
         }
 
@@ -197,9 +204,7 @@ public class AccessTokenIssuer {
             tokenRespDTO.setAuthorizedScopes(scopeString.toString().trim());
         }
 
-        if (tokReqMsgCtx.getProperty("RESPONSE_HEADERS") != null) {
-            tokenRespDTO.setResponseHeaders((ResponseHeader[]) tokReqMsgCtx.getProperty("RESPONSE_HEADERS"));
-        }
+        setResponseHeaders(tokReqMsgCtx, tokenRespDTO);
 
         //Do not change this log format as these logs use by external applications
         if (log.isDebugEnabled()) {
@@ -223,11 +228,13 @@ public class AccessTokenIssuer {
         AuthorizationGrantCacheKey oldCacheKey = new AuthorizationGrantCacheKey(tokenReqDTO.getAuthorizationCode());
         //checking getUserAttributesId vale of cacheKey before retrieve entry from cache as it causes to NPE
         if (oldCacheKey.getUserAttributesId() != null) {
-            CacheEntry authorizationGrantCacheEntry = AuthorizationGrantCache.getInstance()
+            CacheEntry authorizationGrantCacheEntry = AuthorizationGrantCache.getInstance(OAuthServerConfiguration.
+                    getInstance().getAuthorizationGrantCacheTimeout())
                     .getValueFromCache(oldCacheKey);
             AuthorizationGrantCacheKey newCacheKey = new AuthorizationGrantCacheKey(tokenRespDTO.getAccessToken());
-            AuthorizationGrantCache.getInstance().addToCache(newCacheKey, authorizationGrantCacheEntry);
-            AuthorizationGrantCache.getInstance().clearCacheEntry(oldCacheKey);
+            int authorizationGrantCacheTimeout = OAuthServerConfiguration.getInstance().getAuthorizationGrantCacheTimeout();
+            AuthorizationGrantCache.getInstance(authorizationGrantCacheTimeout).addToCache(newCacheKey, authorizationGrantCacheEntry);
+            AuthorizationGrantCache.getInstance(authorizationGrantCacheTimeout).clearCacheEntry(oldCacheKey);
         }
     }
 
@@ -256,5 +263,12 @@ public class AccessTokenIssuer {
         tokenRespDTO.setErrorCode(errorCode);
         tokenRespDTO.setErrorMsg(errorMsg);
         return tokenRespDTO;
+    }
+
+    private void setResponseHeaders(OAuthTokenReqMessageContext tokReqMsgCtx,
+                                    OAuth2AccessTokenRespDTO tokenRespDTO) {
+        if (tokReqMsgCtx.getProperty("RESPONSE_HEADERS") != null) {
+            tokenRespDTO.setResponseHeaders((ResponseHeader[]) tokReqMsgCtx.getProperty("RESPONSE_HEADERS"));
+        }
     }
 }

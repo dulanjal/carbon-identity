@@ -1,20 +1,19 @@
 /*
- *  Copyright (c)  WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ * Copyright (c) 2014, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
  *
- *  WSO2 Inc. licenses this file to you under the Apache License,
+ * WSO2 Inc. licenses this file to you under the Apache License,
  *  Version 2.0 (the "License"); you may not use this file except
- *  in compliance with the License.
- *  You may obtain a copy of the License at
+ * in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing,
- *  software distributed under the License is distributed on an
- *  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- *  KIND, either express or implied.  See the License for the
- *  specific language governing permissions and limitations
- *  under the License.
- *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package org.wso2.carbon.identity.mgt.dto;
@@ -35,7 +34,6 @@ public class UserIdentityDTO {
     private long unlockTime;
     private long lastLogonTime;
     private long lastFailAttemptTime;
-    private long passwordTimeStamp;
     private int failAttempts;
     private boolean accountLock;
     private boolean temporaryLock;
@@ -70,10 +68,6 @@ public class UserIdentityDTO {
         if (userDataMap.get(UserIdentityDataStore.UNLOCKING_TIME) != null) {
             setUnlockTime(Long.parseLong(userDataMap.get(UserIdentityDataStore.UNLOCKING_TIME)));
         }
-//        if(userDataMap.get(UserIdentityDataStore.ON_TIME_PASSWORD) != null){
-//            setOneTimeLogin(Boolean.
-//                                parseBoolean(userDataMap.get(UserIdentityDataStore.ON_TIME_PASSWORD)));
-//        }
         if (userDataMap.get(UserIdentityDataStore.PASSWORD_CHANGE_REQUIRED) != null) {
             setPasswordChangeRequired(Boolean.
                     parseBoolean(userDataMap.get(UserIdentityDataStore.PASSWORD_CHANGE_REQUIRED)));
@@ -200,15 +194,6 @@ public class UserIdentityDTO {
      */
     public void setUserIdentityDataClaim(String claim, String value) {
         userDataMap.put(claim, value);
-    }
-
-    public long getPasswordTimeStamp() {
-        return passwordTimeStamp;
-    }
-
-    public void setPasswordTimeStamp(long passwordTimeStamp) {
-        this.passwordTimeStamp = passwordTimeStamp;
-        this.userDataMap.put(UserIdentityDataStore.PASSWORD_TIME_STAMP, Long.toString(passwordTimeStamp));
     }
 
     public int getTenantId() {
